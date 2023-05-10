@@ -332,52 +332,54 @@ export class DataProxyEngine extends Engine<DataProxyTxInfoPayload> {
   }: RequestInternalOptions): Promise<
     Batch extends true ? { batchResult: QueryEngineResultBatchQueryResult<T>[]; elapsed: number } : QueryEngineResult<T>
   > {
-    return this.withRetry({
-      actionGerund: 'querying',
-      callback: async ({ logHttpCall }) => {
-        const url = interactiveTransaction
-          ? `${interactiveTransaction.payload.endpoint}/graphql`
-          : await this.url('graphql')
+    return this.tracingHelper.runInChildSpan({ name: 'dataProxyRequest', internal: true }, () =>
+      this.withRetry({
+        actionGerund: 'querying',
+        callback: async ({ logHttpCall }) => {
+          const url = interactiveTransaction
+            ? `${interactiveTransaction.payload.endpoint}/graphql`
+            : await this.url('graphql')
 
-        logHttpCall(url)
+          logHttpCall(url)
 
-        const response = await request(
-          url,
-          {
-            method: 'POST',
-            headers: this.headerBuilder.build({ traceparent, interactiveTransaction }),
-            body: JSON.stringify(body),
-            clientVersion: this.clientVersion,
-          },
-          customDataProxyFetch,
-        )
+          const response = await request(
+            url,
+            {
+              method: 'POST',
+              headers: this.headerBuilder.build({ traceparent, interactiveTransaction }),
+              body: JSON.stringify(body),
+              clientVersion: this.clientVersion,
+            },
+            customDataProxyFetch,
+          )
 
-        if (!response.ok) {
-          debug('graphql response status', response.status)
-        }
-
-        const e = await responseToError(response, this.clientVersion)
-        await this.handleError(e)
-
-        const data = await response.json()
-        const extensions = data.extensions as DataProxyExtensions | undefined
-        if (extensions) {
-          this.propagateResponseExtensions(extensions)
-        }
-
-        // TODO: headers contain `x-elapsed` and it needs to be returned
-
-        if (data.errors) {
-          if (data.errors.length === 1) {
-            throw prismaGraphQLToJSError(data.errors[0], this.config.clientVersion!)
-          } else {
-            throw new PrismaClientUnknownRequestError(data.errors, { clientVersion: this.config.clientVersion! })
+          if (!response.ok) {
+            debug('graphql response status', response.status)
           }
-        }
 
-        return data
-      },
-    })
+          const e = await responseToError(response, this.clientVersion)
+          await this.handleError(e)
+
+          const data = await response.json()
+          const extensions = data.extensions as DataProxyExtensions | undefined
+          if (extensions) {
+            this.propagateResponseExtensions(extensions)
+          }
+
+          // TODO: headers contain `x-elapsed` and it needs to be returned
+
+          if (data.errors) {
+            if (data.errors.length === 1) {
+              throw prismaGraphQLToJSError(data.errors[0], this.config.clientVersion!)
+            } else {
+              throw new PrismaClientUnknownRequestError(data.errors, { clientVersion: this.config.clientVersion! })
+            }
+          }
+
+          return data
+        },
+      }),
+    )
   }
 
   /**
@@ -563,7 +565,9 @@ export class DataProxyEngine extends Engine<DataProxyTxInfoPayload> {
       }
 
       try {
-        return await args.callback({ logHttpCall })
+        return this.tracingHelper.runInChildSpan({ name: 'requestAttempt', internal: true }, () =>
+          args.callback({ logHttpCall }),
+        )
       } catch (e) {
         if (!(e instanceof DataProxyError)) throw e
         if (!e.isRetryable) throw e
