@@ -565,7 +565,7 @@ export class DataProxyEngine extends Engine<DataProxyTxInfoPayload> {
       }
 
       try {
-        return this.tracingHelper.runInChildSpan({ name: 'requestAttempt', internal: true }, () =>
+        await this.tracingHelper.runInChildSpan({ name: 'requestAttempt', internal: true }, () =>
           args.callback({ logHttpCall }),
         )
       } catch (e) {
